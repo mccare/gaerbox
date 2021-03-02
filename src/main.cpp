@@ -5,39 +5,37 @@
 */
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
-#include "DHT.h"
+#include "ESPAsyncTCP.h"
+#include "ESPAsyncWebServer.h"
+#include "AsyncJson.h"
+#include "ArduinoJson.h"
 
-#define DHTPIN 14
-#define DHTTYPE DHT11
+// #include "DHT.h"
+#include <Wire.h>
+#include "SHT31.h"
 
-float t = 0.0;
-float h = 0.0;
+float temperature = 0.0;
+float humidity = 0.0;
+SHT31 sht31 = SHT31();
+AsyncWebServer server(80);
 
-DHT dht(DHTPIN, DHTTYPE);
+int RELAYS_PIN = 14;
 
-ESP8266WebServer server(80);
-
-void handleRoot()
+void switchHeating(uint8_t on)
 {
-  server.send(200, "text/plain", "hello from esp8266!\r\n");
+  digitalWrite(RELAYS_PIN, on);
 }
 
-void handleNotFound()
+void handleGetTemperature(AsyncWebServerRequest *request)
 {
-  String message = "File Not Found\n\n";
-  message += "URI: ";
-  message += server.uri();
-  message += "\nMethod: ";
-  message += (server.method() == HTTP_GET) ? "GET" : "POST";
-  message += "\nArguments: ";
-  message += server.args();
-  message += "\n";
-  for (uint8_t i = 0; i < server.args(); i++)
-  {
-    message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
-  }
-  server.send(404, "text/plain", message);
+  Serial.println("Handling get temperature");
+  AsyncResponseStream *response = request->beginResponseStream("application/json");
+  StaticJsonDocument<200> doc;
+  doc["temperature"] = temperature;
+  doc["humidity"] = humidity;
+
+  serializeJson(doc, *response);
+  request->send(response);
 }
 
 void setup()
@@ -60,39 +58,36 @@ void setup()
 
   Serial.print("Connected, IP address: ");
   Serial.println(WiFi.localIP());
-  server.on("/", handleRoot);
-  server.on("/inline", []() {
-    server.send(200, "text/plain", "this works as well");
+
+  server.on("/heap", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send(200, "text/plain", String(ESP.getFreeHeap()));
   });
-  server.onNotFound(handleNotFound);
+  server.on("/temperature", HTTP_GET, handleGetTemperature);
+
   server.begin();
+
   pinMode(PIN_GROVE_POWER, OUTPUT);
   digitalWrite(PIN_GROVE_POWER, 1);
+  pinMode(RELAYS_PIN, OUTPUT);
+  switchHeating(1);
+  sht31.begin();
 }
 
 void loop()
 {
-  server.handleClient();
+  temperature = sht31.getTemperature();
+  humidity = sht31.getHumidity();
+  Serial.printf("Temp = %f C, Humidity = %f", temperature, humidity);
+  Serial.println(" %"); //The unit for  Celsius because original arduino don't support speical symbols
+  delay(1000);
 
-  float newT = dht.readTemperature();
-  // Read temperature as Fahrenheit (isFahrenheit = true)
-  //float newT = dht.readTemperature(true);
-  // if temperature read failed, don't change t value
-  if (isnan(newT))
-  {
-    Serial.println("Failed to read from DHT sensor!");
-  }
-  else
-  {
-    t = newT;
-    Serial.println(t);
-  }
-
+  // digitalWrite(RELAYS_PIN, 0);
   digitalWrite(LED_BUILTIN, HIGH);
   // wait for a second
   delay(1000);
   // turn the LED off by making the voltage LOW
   digitalWrite(LED_BUILTIN, LOW);
   // wait for a second
+  // digitalWrite(RELAYS_PIN, 1);
   delay(1000);
 }
